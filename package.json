@@ -20,6 +20,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "ag-grid-community": "^35.0.1",
     "ag-grid-vue3": "^35.0.1",
+    "echarts": "^6.0.0",
     "monaco-editor": "^0.55.1",
     "papaparse": "^5.5.3",
     "primeicons": "^7.0.0",

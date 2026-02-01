@@ -14,6 +14,7 @@ import ResultViewer from "../Components/ResultViewer.vue"
 
 import { invoke } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
+import SqlChartViewer from "../Components/SqlChartViewer.vue"
 
 /* ============================= */
 /* State                         */
@@ -183,7 +184,16 @@ function runQuery(sql: string) {
   dock.addWidget(widget,{
     mode: "split-bottom"
   })
+
   dock.activateWidget(widget)
+
+  // sample
+  const widget1 = createVueWidget(SqlChartViewer, sql , {
+    sql: sql
+  })
+
+  dock.addWidget(widget1)
+  dock.activateWidget(widget1)
 }
 
 /* ============================= */
