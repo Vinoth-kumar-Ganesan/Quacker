@@ -27,7 +27,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             load_csv_folder,
             get_csv_schemas,
-            execute_sql,
+            execute_sql
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

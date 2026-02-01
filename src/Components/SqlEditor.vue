@@ -1,244 +1,287 @@
 <template>
-  <div class="sql-editor-root">
-    <div class="card flex justify-center editor-toolbar">
-      <Button
-        icon="pi pi-chevron-right"
-        @click="RunQuery"
-        class="toolbar-btn"
-      />
-      <Button
-        icon="pi pi-caret-right"
-        @click="RunQueryInNewTab"
-        class="toolbar-btn"
-      />
-      <Button
-        icon="pi pi-sliders-h"
-        @click="OpenQueryBuilderUI"
-        class="toolbar-btn"
-      />
-    </div>
-
-    <div class="sql-editor-container">
-      <textarea ref="editorEl"></textarea>
-    </div>
-  </div>
+  <SqlEditorToolbar
+    @run="onRun"
+    @cancel="onCancel"
+    @query-builder="onQueryBuilder"
+    @explain="onExplain"
+    @format-sql="onFormat"
+  />
+  <div ref="editorEl" class="sql-editor"></div>
 </template>
 
-<script setup>
-import { ref, onMounted, onBeforeUnmount } from "vue";
-import Button from "primevue/button";
-import CodeMirror from "codemirror";
-import "primeicons/primeicons.css";
+<script setup lang="ts">
+import * as monaco from "monaco-editor"
+import { ref, shallowRef, onMounted, onBeforeUnmount, watch } from "vue"
+import SqlEditorToolbar from "./SqlEditorToolbar.vue"
+import { showSqlQueryBuilder } from "../Utility/SqlQueryBuilder"
+import { format } from "sql-formatter"
 
-/* =============================
-   CodeMirror 5 – Core & Theme
-============================= */
+/* ============================= */
+/* Types                         */
+/* ============================= */
 
-import "codemirror/lib/codemirror.css";
-import "codemirror/theme/dracula.css";
-
-/* =============================
-   SQL Mode & Autocomplete
-============================= */
-
-import "codemirror/mode/sql/sql";
-import "codemirror/addon/hint/show-hint";
-import "codemirror/addon/hint/show-hint.css";
-import "codemirror/addon/hint/sql-hint";
-
-/* =============================
-   STATE
-============================= */
-
-const editorEl = ref(null);
-let editor = null;
-
-const schema = ref({});
-const sqlValue = ref("");
-
-/* =============================
-   TOOLBAR ACTIONS
-============================= */
-
-const RunQuery = () => {
-  console.log("run query");
-};
-
-const RunQueryInNewTab = () => {
-  console.log("run query in new tab");
-};
-
-const OpenQueryBuilderUI = () => {
-  console.log("open query builder");
-};
-
-/* =============================
-   EXTERNAL API
-============================= */
-
-function setSchema(value) {
-  schema.value = value || {};
+interface ColumnMeta {
+  name: string
+  data_type: string
 }
 
-function setSqlValue(value) {
-  sqlValue.value = value || "";
-  editor?.setValue(sqlValue.value);
+interface TableMeta {
+  table: string
+  file_path: string
+  columns: ColumnMeta[]
 }
 
-function getSqlValue() {
-  return editor ? editor.getValue() : sqlValue.value;
-}
+/* ============================= */
+/* Props                         */
+/* ============================= */
 
-/* =============================
-   HELPERS
-============================= */
+const props = defineProps<{
+  schema: TableMeta[]
+  modelValue?: string
+  onExecute?: (sql: string) => void
+}>()
 
-function extractTables(sql) {
-  const map = {};
-  const regex = /\b(from|join)\s+(\w+)(?:\s+(\w+))?/gi;
-  let match;
+/* ============================= */
+/* Monaco Editor                 */
+/* ============================= */
 
-  while ((match = regex.exec(sql))) {
-    const table = match[2];
-    const alias = match[3];
-    map[alias || table] = table;
-  }
-  return map;
-}
+const editorEl = ref<HTMLDivElement | null>(null)
+let editor: monaco.editor.IStandaloneCodeEditor | null = null
 
-function getCurrentWord(cm) {
-  const cursor = cm.getCursor();
-  const line = cm.getLine(cursor.line);
-  const left = line.slice(0, cursor.ch);
-  const match = left.match(/[\w.]+$/);
-  return match ? match[0] : "";
-}
+/* ============================= */
+/* SQL Completion (GLOBAL SAFE)  */
+/* ============================= */
 
-/* =============================
-   AUTOCOMPLETE
-============================= */
+const SQL_KEYWORDS = [
+  "SELECT", "FROM", "WHERE",
+  "GROUP BY", "ORDER BY",
+  "INSERT", "UPDATE", "DELETE",
+  "JOIN", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN",
+  "LIMIT", "OFFSET",
+  "AND", "OR", "NOT",
+  "COUNT", "SUM", "AVG", "MIN", "MAX"
+]
 
-function sqlHint(cm) {
-  const sql = cm.getValue();
-  const tables = extractTables(sql);
-  const word = getCurrentWord(cm);
-  const cursor = cm.getCursor();
+const schemaRef = shallowRef<TableMeta[]>([])
 
-  let list = [];
+/**
+ * 🔒 GLOBAL SINGLETON GUARD
+ * Prevents duplicate providers across:
+ * - component reopens
+ * - route changes
+ * - Vite HMR
+ */
+const COMPLETION_KEY = "__monaco_sql_completion_registered__"
 
-  if (word.includes(".")) {
-    const [alias, colPrefix] = word.split(".");
-    const table = tables[alias];
+function ensureSqlCompletionRegistered() {
+  const g = globalThis as any
+  if (g[COMPLETION_KEY]) return
+  g[COMPLETION_KEY] = true
 
-    if (table && schema.value[table]) {
-      list = schema.value[table]
-        .filter(c => c.startsWith(colPrefix))
-        .map(c => `${alias}.${c}`);
+  monaco.languages.registerCompletionItemProvider("sql", {
+    triggerCharacters: [" ", ","],
+
+    provideCompletionItems(model, position) {
+      const schema = schemaRef.value
+
+      const word = model.getWordUntilPosition(position)
+      const range = {
+        startLineNumber: position.lineNumber,
+        endLineNumber: position.lineNumber,
+        startColumn: word.startColumn,
+        endColumn: word.endColumn
+      }
+
+      const suggestions: monaco.languages.CompletionItem[] = []
+
+      /* Keywords */
+      for (const k of SQL_KEYWORDS) {
+        suggestions.push({
+          label: k,
+          kind: monaco.languages.CompletionItemKind.Keyword,
+          insertText: k,
+          range
+        })
+      }
+
+      /* Tables */
+      for (const t of schema) {
+        suggestions.push({
+          label: t.table,
+          kind: monaco.languages.CompletionItemKind.Class,
+          insertText: t.table,
+          detail: "table",
+          range
+        })
+      }
+
+      /* Columns */
+      for (const t of schema) {
+        for (const c of t.columns) {
+          suggestions.push({
+            label: `${t.table}.${c.name}`,
+            kind: monaco.languages.CompletionItemKind.Field,
+            insertText: `${t.table}.${c.name}`,
+            detail: c.data_type,
+            range
+          })
+
+          suggestions.push({
+            label: c.name,
+            kind: monaco.languages.CompletionItemKind.Field,
+            insertText: c.name,
+            detail: `${c.data_type} (${t.table})`,
+            range
+          })
+        }
+      }
+
+      return { suggestions }
     }
-  } else if (
-    /\b(from|join)\s+\w*$/i.test(
-      sql.slice(0, cm.indexFromPos(cursor))
-    )
-  ) {
-    list = Object.keys(schema.value);
-  } else {
-    const keywords = Object.keys(
-      CodeMirror.resolveMode("text/x-sql").keywords
-    );
+  })
 
-    list = keywords
-      .concat(Object.keys(schema.value))
-      .filter(w =>
-        w.toLowerCase().startsWith(word.toLowerCase())
-      );
-  }
-
-  return {
-    list,
-    from: CodeMirror.Pos(cursor.line, cursor.ch - word.length),
-    to: cursor
-  };
+  console.log("✅ Monaco SQL completion registered once")
 }
 
-/* =============================
-   EDITOR INITIALIZATION
-============================= */
+/* ============================= */
+/* Toolbar Actions               */
+/* ============================= */
+
+function onRun() {
+  const sql = getEffectiveSql()
+  if (!sql) return
+  props.onExecute?.(sql)
+}
+
+function onCancel() {
+  console.log("Cancel execution")
+}
+
+function onFormat() {
+  if (!editor) return
+  const model = editor.getModel()
+  if (!model) return
+
+  const sql = model.getValue()
+  if (!sql.trim()) return
+
+  const formatted = format(sql, {
+    language: "postgresql",
+    uppercase: true,
+    indent: "  "
+  })
+
+  editor.executeEdits("sql-format", [
+    {
+      range: model.getFullModelRange(),
+      text: formatted,
+      forceMoveMarkers: true
+    }
+  ])
+
+  editor.pushUndoStop()
+}
+
+function onQueryBuilder() {
+  const normalizedSchema =
+    props.schema.reduce<Record<string, string[]>>((acc, curr) => {
+      acc[curr.table] = curr.columns.map(c => c.name)
+      return acc
+    }, {})
+
+  showSqlQueryBuilder({
+    schema: normalizedSchema,
+    title: "SQL Query Builder",
+
+    initialBaseTable: props.schema[0]?.table,
+    initialBaseAlias: props.schema[0]?.table?.[0] ?? "t",
+
+    onQueryGenerated(sql) {
+      if (!editor) return
+      const model = editor.getModel()
+      const pos = editor.getPosition()
+      if (!model || !pos) return
+
+      editor.executeEdits("sql-query-builder", [
+        {
+          range: new monaco.Range(
+            pos.lineNumber,
+            pos.column,
+            pos.lineNumber,
+            pos.column
+          ),
+          text: sql + "\n",
+          forceMoveMarkers: true
+        }
+      ])
+
+      editor.focus()
+    }
+  })
+}
+
+function onExplain() {
+  console.log("Explain query")
+}
+
+/* ============================= */
+/* SQL Extraction                */
+/* ============================= */
+
+function getEffectiveSql(): string {
+  if (!editor) return ""
+  const model = editor.getModel()
+  const sel = editor.getSelection()
+  if (!model || !sel) return ""
+
+  return sel.isEmpty()
+    ? model.getValue()
+    : model.getValueInRange(sel)
+}
+
+/* ============================= */
+/* Lifecycle                     */
+/* ============================= */
 
 onMounted(() => {
-  editor = CodeMirror.fromTextArea(editorEl.value, {
-    mode: "text/x-sql",
-    theme: "dracula",
-    lineNumbers: true,
-    lineWrapping: true,
-    autofocus: true,
-    extraKeys: {
-      "Ctrl-Space": cm => cm.showHint({ hint: sqlHint })
-    }
-  });
+  schemaRef.value = props.schema
+  ensureSqlCompletionRegistered()
 
-  editor.setValue(sqlValue.value);
+  editor = monaco.editor.create(editorEl.value!, {
+    value: props.modelValue ?? "SELECT * FROM ",
+    language: "sql",
+    theme: "vs-dark",
+    automaticLayout: true,
+    fontSize: 14,
+    minimap: { enabled: false }
+  })
 
-  editor.on("inputRead", (cm, change) => {
-    if (/[\w.]/.test(change.text[0])) {
-      cm.showHint({
-        hint: sqlHint,
-        completeSingle: false
-      });
-    }
-  });
-
-  editor.on("change", cm => {
-    sqlValue.value = cm.getValue();
-  });
-});
+  editor.addCommand(
+    monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+    onRun
+  )
+})
 
 onBeforeUnmount(() => {
-  editor?.toTextArea();
-  editor = null;
-});
+  editor?.dispose()
+})
 
-/* =============================
-   EXPOSE
-============================= */
+/* ============================= */
+/* Reactivity                    */
+/* ============================= */
 
-defineExpose({
-  setSchema,
-  setSqlValue,
-  getSqlValue,
-  refresh() {
-    editor?.refresh();
-  }
-});
+watch(
+  () => props.schema,
+  schema => {
+    schemaRef.value = schema
+  },
+  { deep: true }
+)
 </script>
 
 <style scoped>
-.sql-editor-root {
+.sql-editor {
+  width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.editor-toolbar {
-  gap: 8px;
-  padding: 6px;
-  border-bottom: 1px solid #333;
-}
-
-.toolbar-btn {
-  color: #facc15;
-}
-
-.sql-editor-container {
-  flex: 1;
-  display: flex;
-}
-
-.sql-editor-container :deep(.CodeMirror) {
-  height: 100%;
-  font-size: 13px;
-}
-
-.lm-TabBar-tabLabel .pi {
-  font-family: "primeicons" !important;
 }
 </style>

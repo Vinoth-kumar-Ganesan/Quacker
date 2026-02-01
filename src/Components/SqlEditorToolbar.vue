@@ -1,73 +1,101 @@
 <template>
   <div class="toolbar">
-    <button
-      class="icon-btn"
-      title="New Connection"
-      @click="emit('new')"
-    >
-      <i class="pi pi-plus"></i>
+    <button class="btn run" @click="emitRun">
+      ▶ Run
     </button>
 
-    <button
-      class="icon-btn"
-      title="Disconnect"
-      @click="emit('disconnect')"
-    >
-      <i class="pi pi-power-off"></i>
+    <button class="btn cancel" @click="emitCancel">
+      ✖ Cancel
+    </button>
+    
+    <button class="btn" @click="emitformatSql">
+      🧹 Format SQL
     </button>
 
-    <button
-      class="icon-btn"
-      title="Reconnect"
-      @click="emit('reconnect')"
-    >
-      <i class="pi pi-refresh"></i>
+    <div class="separator"></div>
+
+    <button class="btn" @click="emitQueryBuilder">
+      🧩 Query Builder
     </button>
 
-    <button
-      class="icon-btn danger"
-      title="Close"
-      @click="emit('close')"
-    >
-      <i class="pi pi-times"></i>
+    <button class="btn" @click="emitExplain">
+      ℹ Explain
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
+/**
+ * Emitted events:
+ * - run
+ * - cancel
+ * - format-sql
+ * - query-builder
+ * - explain
+ */
+
 const emit = defineEmits<{
-  (e: 'new'): void
-  (e: 'disconnect'): void
-  (e: 'reconnect'): void
-  (e: 'close'): void
+  (e: "run"): void
+  (e: "cancel"): void
+  (e: "format-sql"): void
+  (e: "query-builder"): void
+  (e: "explain"): void
 }>()
+
+const emitRun = () => emit("run")
+const emitCancel = () => emit("cancel")
+const emitformatSql = () => emit("format-sql")
+const emitQueryBuilder = () => emit("query-builder")
+const emitExplain = () => emit("explain")
 </script>
 
 <style scoped>
 .toolbar {
   display: flex;
   align-items: center;
-  height: 36px;
-  background: #2b2b2b;
-  padding: 0 6px;
-  gap: 4px;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #d0d0d0;
+  background: #f3f3f3;
+  box-shadow: inset 0 1px 0 #ffffff;
+  font-family: "Segoe UI", Tahoma, Arial, sans-serif;
 }
 
-.icon-btn {
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: transparent;
-  color: #cfcfcf;
+.btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  background: #ffffff;
+  border: 1px solid #c8c8c8;
+  border-radius: 2px;
   cursor: pointer;
-  border-radius: 4px;
+  color: #333;
+  user-select: none;
 }
 
-.icon-btn:hover {
-  background: #3a3a3a;
+.btn:hover {
+  background: #eaeaea;
 }
 
-.icon-btn.danger {
-  color: #ff6b6b;
+.btn:active {
+  background: #dcdcdc;
+}
+
+.btn.run {
+  color: #107c10;
+  font-weight: 600;
+}
+
+.btn.cancel {
+  color: #c50f1f;
+}
+
+.separator {
+  width: 1px;
+  height: 20px;
+  background: #c8c8c8;
+  margin: 0 4px;
 }
 </style>

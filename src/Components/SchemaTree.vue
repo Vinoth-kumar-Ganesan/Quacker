@@ -2,6 +2,21 @@
 import { ref, watchEffect } from "vue";
 import Tree from "primevue/tree";
 import ContextMenu from "primevue/contextmenu";
+import Button from 'primevue/button';
+
+const emit = defineEmits(['openFolder', 'openFile','openSqlEditor']);
+
+const emitOpenFolder = () => {
+  emit('openFolder');
+};
+
+const emitOpenFile = (filePath,tableName) => {
+  emit('openFile', filePath,tableName);
+};
+
+const emitOpenSqlEditor = (filePath,schema) => {
+  emit('openSqlEditor', filePath,schema);
+};
 
 /* -----------------------------
    Props
@@ -29,12 +44,13 @@ function buildPrimeTree(schemas) {
     key: `schema-${sIndex}`,
     label: schema.title,
     icon: "pi pi-folder",
-    type: "schema",           // 👈 important
+    type: "schema",         
     children: schema.tables.map((table, tIndex) => ({
       key: `schema-${sIndex}-table-${tIndex}`,
       label: table.table,
       icon: "pi pi-database",
       type: "table",
+      filePath: table.file_path,
       children: table.columns.map((col, cIndex) => ({
         key: `schema-${sIndex}-table-${tIndex}-col-${cIndex}`,
         label: col.name,
@@ -55,17 +71,18 @@ watchEffect(() => {
    Context Menu (Schema only)
 ------------------------------*/
 const folderMenuItems = [
+
+  {
+    label: "Open Sql Editor",
+    icon: "pi pi-pencil",
+    command: () => openSqlEditor(selectedNode.value)
+  },
+  { separator: true },
   {
     label: "Refresh",
     icon: "pi pi-refresh",
     command: () => refreshSchema(selectedNode.value)
   },
-  {
-    label: "Rename",
-    icon: "pi pi-pencil",
-    command: () => renameSchema(selectedNode.value)
-  },
-  { separator: true },
   {
     label: "Delete",
     icon: "pi pi-trash",
@@ -80,8 +97,9 @@ function refreshSchema(node) {
   console.log("Refresh schema:", node.label);
 }
 
-function renameSchema(node) {
-  console.log("Rename schema:", node.label);
+function openSqlEditor(node) {
+  console.log("open Sql editor:", node);
+  emitOpenSqlEditor(node.filePath,props.schemas);
 }
 
 function deleteSchema(node) {
@@ -90,34 +108,53 @@ function deleteSchema(node) {
 
 function onDoubleClick(event, node) {
   console.log("double Clicked");
-  // if (event.originalEvent) {
-  //   event.originalEvent.preventDefault();
-  // }
+  console.log(node.filePath);
+  if(node.type =="table"){
+    emitOpenFile(node.filePath,node.label);
+  }
+}
 
-  // if (event.node?.type === "schema") {
-  //   selectedNode.value = event.node;
+function onRightClick(event, node) {
+  event.preventDefault()
+  event.stopPropagation()
+  console.log("Right Clicked");
 
-  //   selectedKeys.value = {
-  //     [event.node.key]: true
-  //   };
-
-  //   contextMenu.value.show(event.originalEvent);
-  // }
+  if(node.type =="schema"){
+    console.log(node.label);
+    contextMenu.value.show(event)
+    selectedNode.value = node
+  }
 }
 </script>
 
 <template>
   <ContextMenu ref="contextMenu" :model="folderMenuItems" />
-
+  <div
+    v-if="!treeNodes || treeNodes.length === 0"
+    class="flex items-center justify-center h-40 text-gray-500 text-sm"
+    style=" display: flex;
+    padding-top: 270px;
+    flex-direction: column;
+    align-items: center;"
+  >
+    Please open a folder or file.
+    <div style="margin-top: 10px;">
+        <Button label="Open" @click="emitOpenFolder"></Button>
+    </div>
+  </div>
   <Tree
+  v-else
     :value="treeNodes"
     contextMenu
+    :filter="true" 
+    filterMode="lenient"
     selectionMode="single"
     v-model:selectionKeys="selectedKeys"
     class="w-full"
     :pt="{
       nodeContent: ({ context }) => ({
-        onDblclick: (e) => onDoubleClick(e, context.node)
+        onDblclick: (e) => onDoubleClick(e, context.node),
+        onContextmenu: (e) => onRightClick(e, context.node)
       })
     }"
     >
@@ -134,3 +171,11 @@ function onDoubleClick(event, node) {
     </template>
   </Tree>
 </template>
+<style>
+.p-tree-node-label{
+  font-size: 12px;
+}
+.p-tree {
+  padding: 0px !important;
+}
+</style>
